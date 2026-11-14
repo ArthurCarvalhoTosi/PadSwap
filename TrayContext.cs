@@ -18,8 +18,9 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Icon _errorIcon = CreateIcon(Color.FromArgb(207, 34, 46));
     private readonly Remapper _remapper = new();
     private readonly SynchronizationContext _uiContext;
+    private SettingsForm? _settingsForm;
 
-    public TrayContext()
+    public TrayContext(bool openSettings)
     {
         _statusItem = new ToolStripMenuItem("Iniciando...") { Enabled = false };
         _startWithWindowsItem = new ToolStripMenuItem("Iniciar com o Windows", null, OnToggleStartWithWindows)
@@ -30,6 +31,7 @@ internal sealed class TrayContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Configurar...", null, (_, _) => ShowSettings());
         menu.Items.Add(_startWithWindowsItem);
         menu.Items.Add("Abrir log", null, (_, _) => OpenLog());
         menu.Items.Add("Sair (controle volta ao normal)", null, (_, _) => Exit());
@@ -45,8 +47,11 @@ internal sealed class TrayContext : ApplicationContext
             Visible = true,
         };
 
+        _notifyIcon.DoubleClick += (_, _) => ShowSettings();
+
         _remapper.StateChanged += (state, text) => _uiContext.Post(_ => ShowState(state, text), null);
         _remapper.Start();
+        if (openSettings) ShowSettings();
     }
 
     private void ShowState(RemapperState state, string text)
@@ -59,6 +64,14 @@ internal sealed class TrayContext : ApplicationContext
             RemapperState.Error => _errorIcon,
             _ => _idleIcon,
         };
+    }
+
+    private void ShowSettings()
+    {
+        if (_settingsForm == null || _settingsForm.IsDisposed)
+            _settingsForm = new SettingsForm(_remapper, _activeIcon);
+        _settingsForm.Show();
+        _settingsForm.Activate();
     }
 
     private void OnToggleStartWithWindows(object? sender, EventArgs e)

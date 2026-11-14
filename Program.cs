@@ -19,7 +19,7 @@ internal static class Program
         Log.Write($"PadSwap started from {Environment.ProcessPath}");
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayContext());
+        Application.Run(new TrayContext(openSettings: args.Contains("--settings")));
         return 0;
     }
 

@@ -25,69 +25,89 @@ internal enum PadButton : ushort
 
 /// <summary>
 /// Maps each physical button to the button reported on the virtual controller.
-/// Loaded from padswap.json next to the executable, which has one section per controller
+/// Stored in padswap.json next to the executable, which has one section per controller
 /// personality ("xbox", "playstation"); buttons not listed pass through unchanged.
 /// </summary>
 internal sealed class ButtonMap
 {
     private const string FileName = "padswap.json";
 
-    private static readonly Dictionary<string, string> FaceButtonSwap = new()
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+
+    public static readonly IReadOnlyDictionary<PadButton, PadButton> FaceButtonSwap = new Dictionary<PadButton, PadButton>
     {
-        ["A"] = "B",
-        ["B"] = "A",
-        ["X"] = "Y",
-        ["Y"] = "X",
+        [PadButton.A] = PadButton.B,
+        [PadButton.B] = PadButton.A,
+        [PadButton.X] = PadButton.Y,
+        [PadButton.Y] = PadButton.X,
     };
+
+    private static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
     // Index = bit position in the physical report, value = bit mask to set on the virtual report.
     private readonly ushort[] _targetMaskByBit = new ushort[16];
 
-    private ButtonMap(IReadOnlyDictionary<string, string> buttons)
+    private ButtonMap(IReadOnlyDictionary<PadButton, PadButton> entries)
     {
         for (int bit = 0; bit < 16; bit++)
             _targetMaskByBit[bit] = (ushort)(1 << bit);
-
-        foreach ((string source, string target) in buttons)
-        {
-            if (!Enum.TryParse(source, ignoreCase: true, out PadButton sourceButton) ||
-                !Enum.TryParse(target, ignoreCase: true, out PadButton targetButton))
-            {
-                Log.Write($"Ignoring unknown button mapping \"{source}\" -> \"{target}\".");
-                continue;
-            }
-            _targetMaskByBit[int.TrailingZeroCount((ushort)sourceButton)] = (ushort)targetButton;
-        }
+        foreach ((PadButton source, PadButton target) in entries)
+            _targetMaskByBit[int.TrailingZeroCount((ushort)source)] = (ushort)target;
     }
 
-    public static ButtonMap Load(PadKind kind)
+    public static ButtonMap Load(PadKind kind) => new(ReadEntries(kind));
+
+    /// <summary>Default map: Xbox mode needs the face button swap, PlayStation mode already reports by position.</summary>
+    public static IReadOnlyDictionary<PadButton, PadButton> DefaultEntries(PadKind kind) =>
+        kind == PadKind.Xbox ? FaceButtonSwap : new Dictionary<PadButton, PadButton>();
+
+    /// <summary>Returns the remapped buttons for one controller personality (identity entries are omitted).</summary>
+    public static IReadOnlyDictionary<PadButton, PadButton> ReadEntries(PadKind kind)
     {
-        string section = kind == PadKind.Xbox ? "xbox" : "playstation";
-        string path = Path.Combine(AppContext.BaseDirectory, FileName);
         try
         {
-            if (!File.Exists(path))
-            {
-                // In PlayStation mode the controller is expected to report by position already.
-                var defaults = new { xbox = FaceButtonSwap, playstation = new Dictionary<string, string>() };
-                File.WriteAllText(path, JsonSerializer.Serialize(defaults, new JsonSerializerOptions { WriteIndented = true }));
-            }
+            if (!File.Exists(FilePath))
+                return DefaultEntries(kind);
 
-            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
-            var buttons = new Dictionary<string, string>();
-            if (document.RootElement.TryGetProperty(section, out JsonElement element))
+            var entries = new Dictionary<PadButton, PadButton>();
+            if (ReadFile().TryGetValue(SectionName(kind), out Dictionary<string, string>? section))
             {
-                foreach (JsonProperty property in element.EnumerateObject())
-                    buttons[property.Name] = property.Value.GetString() ?? property.Name;
+                foreach ((string source, string target) in section)
+                {
+                    if (Enum.TryParse(source, ignoreCase: true, out PadButton sourceButton) &&
+                        Enum.TryParse(target, ignoreCase: true, out PadButton targetButton))
+                        entries[sourceButton] = targetButton;
+                    else
+                        Log.Write($"Ignoring unknown button mapping \"{source}\" -> \"{target}\".");
+                }
             }
-            return new ButtonMap(buttons);
+            return entries;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
         {
             Log.Write($"Could not read {FileName}, using the default map: {exception.Message}");
-            return new ButtonMap(kind == PadKind.Xbox ? FaceButtonSwap : new Dictionary<string, string>());
+            return DefaultEntries(kind);
         }
     }
+
+    /// <summary>Writes one personality's section, keeping the other one as it is.</summary>
+    public static void Save(PadKind kind, IReadOnlyDictionary<PadButton, PadButton> entries)
+    {
+        var file = new Dictionary<string, Dictionary<string, string>>();
+        foreach (PadKind each in Enum.GetValues<PadKind>())
+        {
+            IReadOnlyDictionary<PadButton, PadButton> source = each == kind ? entries : ReadEntries(each);
+            file[SectionName(each)] = source
+                .Where(entry => entry.Key != entry.Value)
+                .ToDictionary(entry => entry.Key.ToString(), entry => entry.Value.ToString());
+        }
+        File.WriteAllText(FilePath, JsonSerializer.Serialize(file, WriteOptions));
+    }
+
+    private static Dictionary<string, Dictionary<string, string>> ReadFile() =>
+        JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(File.ReadAllText(FilePath)) ?? [];
+
+    private static string SectionName(PadKind kind) => kind == PadKind.Xbox ? "xbox" : "playstation";
 
     public ushort Apply(ushort physicalButtons)
     {

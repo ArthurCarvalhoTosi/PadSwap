@@ -32,13 +32,17 @@ dotnet publish -c Release -o "$env:LOCALAPPDATA\Programs\PadSwap"
 
 Run `PadSwap.exe` from that folder. Keep it in a fixed location: HidHide allows applications by path.
 
-The tray icon is green when the remap is active, grey while waiting for a controller and red on error. The tray menu (in Portuguese) has "start with Windows", "open log" and "exit". Exiting makes the physical controller visible again.
+The tray icon is green when the remap is active, grey while waiting for a controller and red on error. The tray menu (in Portuguese) has "settings", "start with Windows", "open log" and "exit". Exiting makes the physical controller visible again.
+
+Double-click the tray icon (or start with `--settings`) to open the settings window. It shows live what the game is receiving and lets you edit the button map; saving applies it immediately.
+
+![Settings window](docs/settings.png)
 
 Start PadSwap before the game. A game that already opened the physical controller keeps seeing it until it is restarted.
 
 ## Button map
 
-`padswap.json` is created next to the executable on first run, with one section per controller mode. Buttons not listed pass through unchanged.
+The settings window writes `padswap.json` next to the executable, with one section per controller mode. You can also edit it by hand. Buttons not listed pass through unchanged, and without the file the defaults below apply.
 
 ```json
 {
@@ -47,7 +51,7 @@ Start PadSwap before the game. A game that already opened the physical controlle
 }
 ```
 
-Each entry is `"physical button": "button the game receives"`. Names: `A`, `B`, `X`, `Y`, `LeftShoulder`, `RightShoulder`, `LeftThumb`, `RightThumb`, `Start`, `Back`, `Guide`, `DpadUp`, `DpadDown`, `DpadLeft`, `DpadRight`. In PlayStation mode the buttons are first translated by position (Cross = A, Circle = B, Square = X, Triangle = Y). Restart PadSwap after editing.
+Each entry is `"physical button": "button the game receives"`. Names: `A`, `B`, `X`, `Y`, `LeftShoulder`, `RightShoulder`, `LeftThumb`, `RightThumb`, `Start`, `Back`, `Guide`, `DpadUp`, `DpadDown`, `DpadLeft`, `DpadRight`. In PlayStation mode the buttons are first translated by position (Cross = A, Circle = B, Square = X, Triangle = Y). Restart PadSwap after editing the file by hand.
 
 ## Diagnostics
 

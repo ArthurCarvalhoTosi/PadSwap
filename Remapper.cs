@@ -25,8 +25,33 @@ internal sealed class Remapper
     private readonly Thread _thread;
     private readonly object _padGate = new();
 
+    private readonly object _snapshotGate = new();
+
     private IPhysicalPad? _pad;
     private List<string> _hiddenInstanceIds = [];
+    private volatile ButtonMap _map = ButtonMap.Load(PadKind.Xbox);
+    private volatile bool _mapChanged;
+    private (PadState Physical, ushort VirtualButtons) _snapshot;
+
+    /// <summary>Personality of the controller being forwarded, or null while none is connected.</summary>
+    public PadKind? CurrentKind
+    {
+        get { lock (_padGate) return _pad?.Kind; }
+    }
+
+    /// <summary>Latest physical state and the buttons sent to the virtual controller, for the live view.</summary>
+    public (PadState Physical, ushort VirtualButtons) Snapshot
+    {
+        get { lock (_snapshotGate) return _snapshot; }
+    }
+
+    /// <summary>Applies an edited padswap.json without reconnecting the controller.</summary>
+    public void ReloadMap()
+    {
+        if (CurrentKind is not PadKind kind) return;
+        _map = ButtonMap.Load(kind);
+        _mapChanged = true;
+    }
 
     public event Action<RemapperState, string>? StateChanged;
 
@@ -93,7 +118,7 @@ internal sealed class Remapper
 
     private void Forward(ViGEmClient client, IPhysicalPad pad)
     {
-        ButtonMap map = ButtonMap.Load(pad.Kind);
+        _map = ButtonMap.Load(pad.Kind);
         IXbox360Controller virtualPad = client.CreateXbox360Controller();
         virtualPad.AutoSubmitReport = false;
         virtualPad.FeedbackReceived += OnFeedbackReceived;
@@ -109,11 +134,14 @@ internal sealed class Remapper
 
             while (!_stopRequested.IsSet && pad.TryReadNext(out PadState state))
             {
-                if (!first && state == previous) continue;
+                if (!first && !_mapChanged && state == previous) continue;
                 first = false;
+                _mapChanged = false;
                 previous = state;
 
-                virtualPad.SetButtonsFull(map.Apply(state.Buttons));
+                ushort virtualButtons = _map.Apply(state.Buttons);
+                lock (_snapshotGate) _snapshot = (state, virtualButtons);
+                virtualPad.SetButtonsFull(virtualButtons);
                 virtualPad.SetSliderValue(Xbox360Slider.LeftTrigger, state.LeftTrigger);
                 virtualPad.SetSliderValue(Xbox360Slider.RightTrigger, state.RightTrigger);
                 virtualPad.SetAxisValue(Xbox360Axis.LeftThumbX, state.LeftX);
@@ -129,6 +157,7 @@ internal sealed class Remapper
         finally
         {
             lock (_padGate) _pad = null;
+            lock (_snapshotGate) _snapshot = default;
             pad.SetVibration(0, 0);
             virtualPad.FeedbackReceived -= OnFeedbackReceived;
             try { virtualPad.Disconnect(); }
