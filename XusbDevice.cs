@@ -22,7 +22,9 @@ internal sealed unsafe class XusbDevice : IPhysicalPad
     private const uint IoctlGetInformation = 0x80006000;
     private const uint IoctlGetState = 0x8000E00C;
     private const uint IoctlSetState = 0x8000A010;
+    private const uint IoctlGetLedState = 0x8000E008;
 
+    private const byte SetStateLed = 0x01;
     private const byte SetStateVibration = 0x02;
 
     private readonly SafeFileHandle _handle;
@@ -90,6 +92,30 @@ internal sealed unsafe class XusbDevice : IPhysicalPad
 
     // No I/O to cancel: TryReadNext never waits longer than one poll period.
     public void Interrupt() => _interrupted = true;
+
+    public byte ReadLed() => ReadLed(_handle);
+
+    public void SetLed(byte led) => SetLed(_handle, led);
+
+    /// <summary>
+    /// Player LED pattern (6..9 = player 1..4 lit). XInput derives the user index, the "slot"
+    /// games ask for, from this value.
+    /// </summary>
+    public static byte ReadLed(SafeFileHandle handle)
+    {
+        byte* input = stackalloc byte[3] { 0x01, 0x01, 0x00 };
+        byte* output = stackalloc byte[3];
+        if (!Native.DeviceIoControl(handle, IoctlGetLedState, input, 3, output, 3, out uint returned, IntPtr.Zero) || returned < 3)
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+        return output[2];
+    }
+
+    public static void SetLed(SafeFileHandle handle, byte led)
+    {
+        byte* input = stackalloc byte[5] { 0x00, led, 0x00, 0x00, SetStateLed };
+        if (!Native.DeviceIoControl(handle, IoctlSetState, input, 5, null, 0, out _, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+    }
 
     public void SetVibration(byte largeMotor, byte smallMotor)
     {

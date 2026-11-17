@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Runtime;
+using Microsoft.Win32.SafeHandles;
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Exceptions;
 using Nefarius.ViGEm.Client.Targets;
@@ -122,7 +124,9 @@ internal sealed class Remapper
         IXbox360Controller virtualPad = client.CreateXbox360Controller();
         virtualPad.AutoSubmitReport = false;
         virtualPad.FeedbackReceived += OnFeedbackReceived;
+        HashSet<string> xusbPathsBefore = DeviceTree.GetInterfacePaths(XusbDevice.InterfaceClass).ToHashSet();
         virtualPad.Connect();
+        byte? physicalLed = pad is XusbDevice xusb ? TakeOverPlayerSlot(xusb, xusbPathsBefore) : null;
         lock (_padGate) _pad = pad;
         string mode = pad.Kind == PadKind.Xbox ? "modo Xbox" : "modo PlayStation";
         Report(RemapperState.Active, HidHide.IsInstalled ? $"Ativo ({mode})" : $"Ativo ({mode}), sem HidHide: entrada duplicada");
@@ -159,10 +163,61 @@ internal sealed class Remapper
             lock (_padGate) _pad = null;
             lock (_snapshotGate) _snapshot = default;
             pad.SetVibration(0, 0);
+            if (physicalLed is byte led)
+            {
+                // Hand the slot back, so the physical pad is player 1 again once PadSwap exits.
+                try { ((XusbDevice)pad).SetLed(led); }
+                catch (Win32Exception) { /* Already unplugged. */ }
+            }
             virtualPad.FeedbackReceived -= OnFeedbackReceived;
             try { virtualPad.Disconnect(); }
             catch (Exception exception) { Log.Write($"Virtual controller disconnect failed: {exception.Message}"); }
         }
+    }
+
+    /// <summary>
+    /// xusb22 hands out XInput slots in arrival order, so a physical pad plugged in since boot
+    /// holds slot 0 and the virtual one lands in slot 1, which games that only read the first
+    /// slot never see. XInput takes the slot from the player LED, so swapping the two LEDs moves
+    /// the virtual pad into the physical one's slot. Returns the physical LED to restore later.
+    /// </summary>
+    private static byte? TakeOverPlayerSlot(XusbDevice physical, HashSet<string> xusbPathsBefore)
+    {
+        const int attempts = 30;
+        const int delayMilliseconds = 100;
+
+        try
+        {
+            // The virtual pad's interface and LED show up shortly after Connect returns.
+            for (int attempt = 0; attempt < attempts; attempt++)
+            {
+                string? virtualPath = DeviceTree.GetInterfacePaths(XusbDevice.InterfaceClass)
+                    .FirstOrDefault(path => !xusbPathsBefore.Contains(path));
+                if (virtualPath != null)
+                {
+                    using SafeFileHandle virtualHandle = Native.OpenDevice(virtualPath, Native.GenericRead | Native.GenericWrite);
+                    byte virtualLed = XusbDevice.ReadLed(virtualHandle);
+                    if (virtualLed != 0)
+                    {
+                        byte physicalLed = physical.ReadLed();
+                        if (virtualLed != physicalLed)
+                        {
+                            physical.SetLed(virtualLed);
+                            XusbDevice.SetLed(virtualHandle, physicalLed);
+                            Log.Write($"Virtual controller moved to the physical one's player slot (LED {virtualLed} -> {physicalLed}).");
+                        }
+                        return physicalLed;
+                    }
+                }
+                Thread.Sleep(delayMilliseconds);
+            }
+            Log.Write("Virtual controller did not show up in time; it keeps the player slot Windows gave it.");
+        }
+        catch (Win32Exception exception)
+        {
+            Log.Write($"Could not swap player slots: {exception.Message}");
+        }
+        return null;
     }
 
     /// <summary>Games send rumble to the virtual controller; pass it on to the physical one.</summary>

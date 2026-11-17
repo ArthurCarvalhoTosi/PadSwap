@@ -16,6 +16,7 @@ physical controller ──read──> PadSwap ──remapped state──> virtua
 - **Output:** a virtual Xbox 360 controller created through [ViGEmBus](https://github.com/nefarius/ViGEmBus).
 - **Hiding:** [HidHide](https://github.com/nefarius/HidHide) blocks every other process from opening the physical controller. PadSwap registers itself and hides the controller on its own.
 - Rumble sent by games to the virtual controller is forwarded to the physical one.
+- In Xbox mode the physical pad, connected first, holds XInput slot 0 (player 1). Many games only read that slot, so PadSwap swaps the player LEDs, which is what XInput derives the slot from, to put the virtual pad there. Exiting gives the slot back.
 
 ## Requirements
 
@@ -60,7 +61,7 @@ Output is only visible when redirected, since this is a windowed app:
 ```powershell
 .\PadSwap.exe --probe 5 | Out-String    # list controllers and print state changes for 5 s
 .\PadSwap.exe --learn 60 | Out-String   # print the face buttons in the order you press them
-.\PadSwap.exe --xinput | Out-String     # what the XInput API reports to this process
+.\PadSwap.exe --xinput | Out-String     # XInput slots as PadSwap sees them (it is allowed to see the hidden pad)
 ```
 
 The log is at `%LOCALAPPDATA%\PadSwap\padswap.log`.
@@ -70,7 +71,7 @@ The log is at `%LOCALAPPDATA%\PadSwap\padswap.log`.
 - One controller at a time (the first physical one found).
 - PlayStation mode supports wired DualShock 4 compatible pads only (`054C:05C4`, `054C:09CC`); the touchpad click is not mapped.
 - Only buttons are remapped. Sticks and triggers pass through as they are.
-- Xbox mode with HidHide active has seen little testing.
+- Rumble has seen little testing.
 
 ## License
 
